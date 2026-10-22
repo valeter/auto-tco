@@ -51,6 +51,18 @@ try{
   await click('#share');const grantaURL=await val('share-url');await navigate(grantaURL);await ready();
   assert.equal(await val('compare-base'),'granta');assert.equal(await val('granta-price-value'),'1390000');
   await click('#reset-all');await click('#dismiss-undo');await click('[data-car-tab="azimut"]');
+  for(const km of [60001,100000,300000]){
+    await type('general-km-value',String(km));await key('Enter');
+    assert.equal((await saved()).general.km,km);
+    assert.notEqual(await run('document.getElementById("general-km-value").getAttribute("aria-invalid")'),'true');
+    if(km%1000===0)assert.equal(await val('general-km-range'),String(km));
+    const fuel=await run(`[...[...document.querySelectorAll('#breakdown-rows tr')].find(r=>r.querySelector('th').textContent==='Топливо').querySelectorAll('td')].map(e=>Number(e.textContent.replace(/[^0-9]/g,'')))`);
+    assert.ok(fuel.includes(Math.round(km*5/100*8*77)));
+  }
+  await click('#share');const highMileageURL=await val('share-url');await navigate(highMileageURL);await ready();
+  assert.equal(await val('general-km-value'),'300000');
+  await reload();await ready();assert.equal((await saved()).general.km,300000);
+  await click('#reset-all');await click('#dismiss-undo');
   for(const name of ['includePurchase','includeSale']){
     assert.equal(await run(`document.getElementById('general-${name}-value').checked`),true);
     assert.equal(await run(`document.getElementById('general-${name}-value').closest('section').id`),'settings');

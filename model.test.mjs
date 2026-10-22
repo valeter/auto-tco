@@ -21,7 +21,7 @@ test('preserves legacy full states and sparse links against their original defau
 });
 
 test('all supported horizons and mileage boundaries remain finite and reconcile',()=>{
-  for(let years=1;years<=15;years++)for(const km of [0,8000,15000,60000]){
+  for(let years=1;years<=15;years++)for(const km of [0,8000,15000,60000,60001,100000,300000]){
     const s=defaultState();Object.assign(s.general,{years,km});
     for(const r of calculate(s)){
       assert.ok(Number.isFinite(r.tco));near(r.cash-r.sale,r.tco);
@@ -29,6 +29,22 @@ test('all supported horizons and mileage boundaries remain finite and reconcile'
       near(r.categories.purchase+r.categories.equipment+r.operating+r.categories.finance-r.saleNet,r.tco);
       if(km===0)assert.equal(r.perKm,null);
     }
+  }
+});
+
+test('high annual mileage survives scenario round trips and drives operating costs',()=>{
+  for(const km of [60001,100000,123456,300000]){
+    const s=defaultState();s.general.km=km;s.general.years=3;
+    assert.equal(normalizeState(s).general.km,km);
+    assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(stateDelta(s)))),s);
+    const r=car(s),c=s.cars.azimut;
+    assert.equal(r.km,km*3);
+    near(r.categories.fuel,km*3/100*c.fuel*s.general.fuelPrice);
+    assert.equal(r.rows.reduce((sum,row)=>sum+row.serviceCount,0),Math.floor(km*3/c.serviceKm));
+    const base=defaultState();base.general.years=3;base.general.km=60000;
+    const baseline=car(base);
+    assert.ok(r.categories.repairs>baseline.categories.repairs);
+    assert.ok(r.saleNet<baseline.saleNet);
   }
 });
 
