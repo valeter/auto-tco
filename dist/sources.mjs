@@ -58,6 +58,8 @@ const sale=new Set(['resaleShift','manualSale','individualShift','mileagePenalty
 const finance=new Set(['inflation','fuelGrowth','serviceGrowth','insuranceGrowth','otherGrowth','taxGrowth','downPayment','loanRate','loanYears','loanFees','returnRate']);
 const result=(status,label,detail,url)=>({status,label,detail,url});
 export function parameterEvidence(scope,key){
+  if(scope==='general'&&key==='includePurchase')return result('choice','состав расходов','Исключает только цену автомобиля, включая выплаты основного долга. Сохранённая цена для каско и ценовые параметры перепродажи не изменяются. Оформление, оборудование, проценты и комиссии остаются.');
+  if(scope==='general'&&key==='includeSale')return result('choice','сценарий владения','Без продажи выручка и расходы на сделку равны нулю. Досрочного погашения кредита в конце срока нет; машина и оставшийся долг сохраняются.');
   if(scope==='general'&&key==='cascoEnabled')return result('choice','выбор владельца','Общий выключатель каско для всех машин. Тарифы и сроки сохраняются и применяются снова после включения.');
   if(scope==='general'&&key==='serviceIntervalShift')return result('choice','сценарий частоты ТО','Поправка к исходным интервалам по пробегу и времени, включая первый визит. Отрицательное значение сокращает интервалы; положительное увеличивает. Состав и цена полного визита сохраняются. Это не изменение заводского регламента.');
   if(scope==='custom')return result('assumption','ваши исходные допущения','Данные конкретного автомобиля не загружаются автоматически. Условные значения нужно заменить.');

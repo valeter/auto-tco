@@ -42,6 +42,8 @@ export const GENERAL_GROUPS = [
     n('fuelPrice','Цена бензина',40,150,1,'₽/л'),
     n('resaleShift','Общая поправка к перепродаже',-30,30,1,'п.п.','От рыночной цены нового аналога. Не действует при ручной цене продажи.'),
     b('cascoEnabled','Покупка каско','Для всех машин, включая индивидуальные тарифы. Настроенные ставки сохраняются.'),
+    b('includePurchase','Учесть цену покупки','При отключении стоимость машины не входит в расходы. Исходная цена для каско и оценки продажи сохраняется.'),
+    b('includeSale','Учесть цену продажи','При отключении машина остаётся у вас: выручка и расходы на продажу не учитываются.'),
     n('serviceIntervalShift','Изменение интервала ТО',-50,100,5,'%','Минус — чаще, плюс — реже. −20%: 10 000 → 8 000 км и 12 → 9,6 месяца; +20%: 12 000 км и 14,4 месяца. Применяется к исходным интервалам каждой машины, включая первый визит. Нулевое ТО оплачивается один раз.')
   ]},
   {id:'extras',title:'Общие дополнительные расходы',fields:[
@@ -136,7 +138,7 @@ export const CAR_GROUPS = [
 
 export function defaultState(){
   const general={years:5,km:15000,fuelPrice:77,resaleShift:0,parking:0,wash:18000,tolls:0,other:0,oneOff:0,oneOffYear:1,
-    cascoEnabled:true,serviceIntervalShift:0,cascoFirst:6,cascoNext:3.5,cascoLate:2.5,cascoYears:15,
+    cascoEnabled:true,includePurchase:true,includeSale:true,serviceIntervalShift:0,cascoFirst:6,cascoNext:3.5,cascoLate:2.5,cascoYears:15,
     financial:false,moneyMode:'real',inflation:5,fuelGrowth:5,serviceGrowth:5,insuranceGrowth:5,otherGrowth:5,taxGrowth:0,resaleGrowth:5,
     loanEnabled:false,downPayment:50,loanRate:10,loanYears:3,loanFees:0,capitalEnabled:false,returnRate:10};
   const cars={};
@@ -234,6 +236,7 @@ export function maintenanceIntervals(car,g){
 
 export function calculateCar(info,car,g){
   const years=g.years;
+  const includePurchase=g.includePurchase!==false,includeSale=g.includeSale!==false;
   const growth=(rate,year)=>g.financial?(1+rate/100)**year:1;
   const divisor=year=>g.financial&&g.moneyMode==='real'?(1+g.inflation/100)**year:1;
   const extra=car.overrideExtras?car:g;
@@ -242,7 +245,7 @@ export function calculateCar(info,car,g){
   const useLoan=g.financial&&g.loanEnabled;
   const principal=useLoan?car.price*(1-loan.downPayment/100):0;
   const schedule=loanSchedule(principal,loan.loanRate,loan.loanYears,years);
-  const upfront=emptyCategories();upfront.purchase=car.price-principal;upfront.equipment=car.initialExtras;
+  const upfront=emptyCategories();upfront.purchase=includePurchase?car.price-principal:0;upfront.equipment=car.initialExtras;
   if(car.tireMode==='purchases'&&!car.winterIncluded&&car.summerShare<100)upfront.tires=car.winterPrice;
   upfront.finance=useLoan?loan.loanFees:0;
   const nominalRows=[{year:0,categories:upfront,sale:0,serviceCount:0,debtSettlement:0}];
@@ -277,10 +280,11 @@ export function calculateCar(info,car,g){
     cat.osago=car.osago*growth(g.insuranceGrowth,year);cat.tax=car.tax*growth(g.taxGrowth,year);
     for(const key of ['parking','wash','tolls','other'])cat[key]=extra[key]*growth(g.otherGrowth,year);
     if(year===extra.oneOffYear)cat.other+=extra.oneOff*growth(g.otherGrowth,year);
-    const l=schedule.rows[year-1];cat.purchase=l.principal+l.settlement;cat.finance=l.interest;
+    const l=schedule.rows[year-1],settlement=includeSale?l.settlement:0;
+    cat.purchase=includePurchase?l.principal+settlement:0;cat.finance=l.interest;
     let sale=0;
-    if(year===years){sale=resaleBase.gross*growth(g.resaleGrowth,year);cat.saleCosts=resaleBase.fees*growth(g.resaleGrowth,year);}
-    nominalRows.push({year,categories:cat,sale,serviceCount,debtSettlement:l.settlement});
+    if(includeSale&&year===years){sale=resaleBase.gross*growth(g.resaleGrowth,year);cat.saleCosts=resaleBase.fees*growth(g.resaleGrowth,year);}
+    nominalRows.push({year,categories:cat,sale,serviceCount,debtSettlement:includePurchase?settlement:0});
   }
   const categories=emptyCategories();let nominalCash=0,cash=0,sale=0,cumulative=0;
   const rows=nominalRows.map(row=>{

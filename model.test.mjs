@@ -184,6 +184,50 @@ test('financial block off ignores all latent inputs; equal inflation cancels rea
   s.general.moneyMode='nominal';assert.ok(car(s).tco!==base);
 });
 
+test('purchase and sale switches preserve price and insurance and reconcile all four combinations',()=>{
+  for(const financial of [false,true])for(const moneyMode of ['real','nominal'])for(const years of [3,5,8]){
+    const s=defaultState();s.cars.custom.enabled=true;
+    Object.assign(s.general,{financial,moneyMode,years});
+    s.cars.gac.saleCommission=3;s.cars.gac.saleFixed=10000;
+    const cars=structuredClone(s.cars),original=calculate(s);
+    for(const includePurchase of [true,false])for(const includeSale of [true,false]){
+      Object.assign(s.general,{includePurchase,includeSale});
+      for(const r of calculate(s)){
+        const before=original.find(x=>x.id===r.id);
+        near(r.tco,before.tco-(includePurchase?0:before.categories.purchase)+(includeSale?0:before.saleNet));
+        near(r.saleNet,includeSale?before.saleNet:0);
+        near(r.categories.purchase,includePurchase?before.categories.purchase:0);
+        near(r.categories.casco,before.categories.casco);
+        near(r.categories.equipment,before.categories.equipment);
+        near(r.categories.saleCosts,includeSale?before.categories.saleCosts:0);
+        assert.deepEqual(r.referenceSale,before.referenceSale);
+        near(r.rows.reduce((n,row)=>n+row.net,0),r.tco);
+      }
+      assert.deepEqual(normalizeState(stateDelta(s)),s);
+    }
+    assert.deepEqual(s.cars,cars);
+  }
+  for(const version of [2,3,4]){
+    const restored=normalizeState({version});
+    assert.equal(restored.general.includePurchase,true);assert.equal(restored.general.includeSale,true);
+  }
+});
+
+test('keeping the car does not trigger loan settlement and excluded purchase never counts principal',()=>{
+  const s=defaultState();Object.assign(s.general,{years:3,financial:true,moneyMode:'nominal',loanEnabled:true,loanYears:10,loanRate:12,loanFees:25000});
+  const sold=car(s);assert.ok(sold.loanRemaining>0);assert.ok(sold.loanInterest>0);
+  s.general.includeSale=false;const kept=car(s);
+  near(kept.tco,sold.tco+sold.saleNet-sold.loanRemaining);
+  near(kept.categories.purchase,sold.categories.purchase-sold.loanRemaining);
+  near(kept.rows.at(-1).debtSettlement,0);near(kept.loanRemaining,sold.loanRemaining);
+  for(const includeSale of [true,false]){
+    Object.assign(s.general,{includeSale,includePurchase:false});const r=car(s);
+    near(r.categories.purchase,0);near(r.categories.finance,sold.categories.finance);
+    near(r.tco,(includeSale?sold:kept).tco-(includeSale?sold:kept).categories.purchase);
+    assert.ok(r.rows.every(row=>row.categories.purchase===0&&row.debtSettlement===0));
+  }
+});
+
 test('transport tax is independent of expense inflation',()=>{
   const s=defaultState();Object.assign(s.general,{financial:true,moneyMode:'nominal',otherGrowth:20});
   near(car(s,'gac').categories.tax,5*17325);

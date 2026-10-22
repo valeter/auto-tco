@@ -10,11 +10,14 @@ await mkdir(outputDir,{recursive:true});
 const pages=await(await fetch(new URL('json/list',cdpURL))).json();
 const ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);
 await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=reject;});
-let seq=0;const pending=new Map(),errors=[];
-ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.id){const p=pending.get(d.id);pending.delete(d.id);d.error?p.reject(d.error):p.resolve(d.result);}else if(d.method==='Runtime.exceptionThrown')errors.push(d.params.exceptionDetails);};
+let seq=0,currentLoaderId='';const pending=new Map(),errors=[];
+ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.id){const p=pending.get(d.id);pending.delete(d.id);d.error?p.reject(d.error):p.resolve(d.result);}else if(d.method==='Runtime.exceptionThrown')errors.push(d.params.exceptionDetails);else if(d.method==='Page.frameNavigated'&&!d.params.frame.parentId)currentLoaderId=d.params.frame.loaderId;};
 const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});
 const run=async expression=>{const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function waitForDocument(predicate){for(let i=0;i<100;i++){if(predicate()&&await run('document.readyState==="complete"'))return;await pause(50);}throw Error('Navigation did not finish');}
+async function navigate(url){const result=await send('Page.navigate',{url});if(result.loaderId)await waitForDocument(()=>currentLoaderId===result.loaderId);}
+async function reload(){const previous=currentLoaderId;await send('Page.reload');await waitForDocument(()=>currentLoaderId!==previous);}
 const click=selector=>run(`document.querySelector(${JSON.stringify(selector)}).click()`);
 async function ready(){for(let i=0;i<50;i++){if(await run('document.querySelectorAll("#baseline-rows tr").length===8'))return;await pause(100);}throw Error('Page not ready: '+JSON.stringify(errors));}
 const val=id=>run(`document.getElementById(${JSON.stringify(id)}).value`);
@@ -28,26 +31,48 @@ async function saved(){await pause(220);return run('JSON.parse(localStorage.getI
 const scenarios=()=>run('JSON.parse(localStorage.getItem("auto-tco-scenarios-v2"))');
 
 try{
-  await send('Runtime.enable');await send('Page.enable');
+  await send('Runtime.enable');await send('Page.enable');await send('Network.enable');await send('Network.setCacheDisabled',{cacheDisabled:true});
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
-  await send('Page.navigate',{url:'about:blank'});
+  await navigate('about:blank');
   await send('Storage.clearDataForOrigin',{origin:baseURL.origin,storageTypes:'all'});
-  await send('Page.navigate',{url:baseURL.href});await ready();
+  await navigate(baseURL.href);await ready();
   assert.equal(await val('compare-base'),'granta');
   assert.match(await run('document.querySelector("#cards article").textContent'),/Lada Granta.*База сравнения/s);
   const legacy=defaultState();legacy.version=3;delete legacy.cars.granta;legacy.cars.azimut.price=3100000;
   await run(`window.addEventListener('pagehide',()=>{localStorage.setItem('auto-tco-state-v2',${JSON.stringify(JSON.stringify(legacy))});localStorage.setItem('auto-tco-ui-v4',JSON.stringify({compareBase:'azimut'}));},{once:true});`);
-  await send('Page.navigate',{url:'about:blank'});await send('Page.navigate',{url:baseURL.href});await ready();
+  await navigate('about:blank');await navigate(baseURL.href);await ready();
   assert.equal(await val('compare-base'),'granta');
   assert.equal(await run('document.querySelector("[data-enabled=granta]").checked'),true);
   assert.equal(await val('azimut-price-value'),'3100000');
-  await change('compare-base','gac');await send('Page.reload');await ready();assert.equal(await val('compare-base'),'gac');
+  await change('compare-base','gac');await reload();await ready();assert.equal(await val('compare-base'),'gac');
   await change('compare-base','granta');await click('#reset-all');await click('#dismiss-undo');
   await click('[data-car-tab="granta"]');assert.equal(await val('granta-price-value'),'1290000');
   await input('granta-price-value',1390000);assert.equal((await saved()).cars.granta.price,1390000);
-  await click('#share');const grantaURL=await val('share-url');await send('Page.navigate',{url:grantaURL});await ready();
+  await click('#share');const grantaURL=await val('share-url');await navigate(grantaURL);await ready();
   assert.equal(await val('compare-base'),'granta');assert.equal(await val('granta-price-value'),'1390000');
   await click('#reset-all');await click('#dismiss-undo');await click('[data-car-tab="azimut"]');
+  for(const name of ['includePurchase','includeSale']){
+    assert.equal(await run(`document.getElementById('general-${name}-value').checked`),true);
+    assert.equal(await run(`document.getElementById('general-${name}-value').closest('section').id`),'settings');
+  }
+  const accountingRow=label=>run(`(()=>{const row=[...document.querySelectorAll('#breakdown-rows tr')].find(r=>r.querySelector('th').textContent===${JSON.stringify(label)});return [...row.querySelectorAll('td')].map(e=>e.textContent);})()`);
+  const resaleBefore=await accountingRow('Выручка от продажи до комиссии');
+  await click('#general-includePurchase-value');
+  assert.equal((await saved()).cars.azimut.price,2800000);
+  assert.ok((await accountingRow('Покупка автомобиля')).every(v=>v==='0 ₽'));
+  assert.deepEqual((await accountingRow('Выручка от продажи до комиссии')).sort(),resaleBefore.sort());
+  await click('#general-includeSale-value');
+  assert.ok((await accountingRow('Выручка от продажи до комиссии')).every(v=>v==='0 ₽'));
+  assert.ok((await accountingRow('Расходы при продаже')).every(v=>v==='0 ₽'));
+  assert.equal(await run('document.getElementById("results-title").textContent'),'Расходы без покупки и продажи');
+  assert.match(await run('document.querySelector("#cards .sale-tag").textContent'),/Продажа не учитывается/);
+  await click('#share');const accountingURL=await val('share-url');await navigate(accountingURL);await ready();
+  assert.equal(await run('document.getElementById("general-includePurchase-value").checked'),false);
+  assert.equal(await run('document.getElementById("general-includeSale-value").checked'),false);
+  const advancedLink='#settings a[href="#general-settings"]';
+  assert.match(await run(`document.querySelector(${JSON.stringify(advancedLink)}).textContent`),/Расширенные настройки для всех машин/);
+  await click(advancedLink);await pause(100);assert.equal(await run('location.hash'),'#general-settings');
+  await click('#reset-all');await click('#dismiss-undo');
   await run('document.documentElement.style.scrollBehavior="auto"');
   assert.equal(await run('document.getElementById("general-cascoEnabled-value").checked'),true);
   assert.equal(await run('document.querySelectorAll("#source-links article").length'),9);
@@ -62,7 +87,7 @@ try{
   await click('#general-cascoEnabled-value');
   assert.equal(await run('document.getElementById("general-cascoFirst-value").disabled'),true);
   assert.equal(await run('document.getElementById("azimut-overrideCasco-value").disabled'),true);
-  await click('#share');const quickURL=await val('share-url');await send('Page.navigate',{url:quickURL});await ready();
+  await click('#share');const quickURL=await val('share-url');await navigate(quickURL);await ready();
   assert.equal(await run('document.getElementById("general-cascoEnabled-value").checked'),false);
   assert.equal(await val('general-serviceIntervalShift-value'),'-20');
   const allCascoZero=()=>run(`[...[...document.querySelectorAll('#breakdown-rows tr')].find(r=>r.querySelector('th').textContent==='Каско').querySelectorAll('td')].every(e=>Number(e.textContent.replace(/[^0-9]/g,''))===0)`);
@@ -80,7 +105,7 @@ try{
   await input('azimut-cascoYears-value',1);await input('azimut-cascoFirst-value',10);assert.deepEqual((await cascoAmounts()).filter(n=>n>0),[280000]);
   await input('general-cascoFirst-value',4);assert.deepEqual((await cascoAmounts()).filter(n=>n>0),[280000]);
   await click('#azimut-overrideCasco-value');assert.ok((await cascoAmounts()).every(n=>n===0));
-  await click('#share');const cascoURL=await val('share-url');await send('Page.navigate',{url:cascoURL});await ready();
+  await click('#share');const cascoURL=await val('share-url');await navigate(cascoURL);await ready();
   assert.equal(await val('general-cascoFirst-value'),'4');assert.equal(await val('general-cascoYears-value'),'0');assert.equal(await run('document.getElementById("azimut-overrideCasco-value").checked'),false);assert.ok((await cascoAmounts()).every(n=>n===0));
   await run(`location.hash='s='+btoa(JSON.stringify({version:2,cars:{azimut:{cascoFirst:9}}}))`);await pause(100);
   assert.equal(await run('document.getElementById("azimut-overrideCasco-value").checked'),true);assert.equal(await val('azimut-cascoFirst-value'),'9');
@@ -115,7 +140,7 @@ try{
   await input('general-km-value',25000);await input('scenario-name','B');await click('#save-as');const idB=await val('scenario-select');
   await change('scenario-select',idA);assert.equal(await val('scenario-name'),'');
   await input('general-km-value',18000);assert.equal(await val('scenario-select'),idA);assert.match(await run('document.getElementById("scenario-dirty").textContent'),/несохран/);await click('#save-scenario');
-  await pause(250);await send('Page.reload');await ready();assert.equal(await val('scenario-select'),idA);assert.equal(await val('general-km-value'),'18000');
+  await pause(250);await reload();await ready();assert.equal(await val('scenario-select'),idA);assert.equal(await val('general-km-value'),'18000');
   assert.equal((await scenarios()).find(s=>s.id===idA).state.general.km,18000);assert.equal((await scenarios()).find(s=>s.id===idB).state.general.km,25000);
   await input('scenario-name','A');await click('#save-as');assert.equal((await scenarios()).at(-1).name,'A (2)');
   await click('#delete-scenario');assert.equal((await scenarios()).length,2);await click('#undo');assert.equal((await scenarios()).length,3);
@@ -135,7 +160,7 @@ try{
   await input('custom-name-value','=1+1 \"Тест\" <b> 🚗');assert.equal(await run('document.querySelectorAll("#cards b").length'),0);
   await run('window.__csv=null;URL.createObjectURL=b=>{window.__csv=b;return "blob:qa"};HTMLAnchorElement.prototype.click=function(){}');await click('#export');assert.ok((await run('window.__csv.text()')).includes("'="));
   await input('custom-name-value','Мой автомобиль');
-  await click('#share');const url=await val('share-url');await run('localStorage.clear()');await send('Page.navigate',{url});await ready();
+  await click('#share');const url=await val('share-url');await run('localStorage.clear()');await navigate(url);await ready();
   assert.equal(await run('document.querySelectorAll("#cards article").length'),9);await click('[data-car-tab="custom"]');assert.equal(await val('custom-price-value'),'3330000');
   await run('window.__csv=null;URL.createObjectURL=b=>{window.__csv=b;return "blob:qa"};HTMLAnchorElement.prototype.click=function(){}');await click('#export');const csv=await run('window.__csv.text()');assert.match(csv,/Мой автомобиль/);assert.match(csv,/3330000/);
   await input('general-km-value',0);assert.equal((await saved()).general.km,0);
@@ -146,14 +171,14 @@ try{
   await click('[data-car-tab="azimut"]');await run('document.getElementById("car-editor").scrollIntoView({behavior:"instant"})');await shot('editor');
   for(const width of [390,320]){
     await send('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:1,mobile:true});await pause(200);
-    await run('window.scrollTo({top:0,behavior:"instant"})');const m=await metrics();assert.equal(m.overflow,false);assert.ok(m.labelPixels>=11);assert.ok(m.resultTop<950);assert.equal(await run('getComputedStyle(document.querySelector(".comparison-table th")).position'),'sticky');console.log('Mobile '+width,m);await shot('mobile-'+width);
+    await run('window.scrollTo({top:0,behavior:"instant"})');const m=await metrics();assert.equal(m.overflow,false);assert.ok(m.labelPixels>=11);assert.ok(m.resultTop<1200);assert.equal(await run('getComputedStyle(document.querySelector(".comparison-table th")).position'),'sticky');console.log('Mobile '+width,m);await shot('mobile-'+width);
     await run('document.querySelector(".chart-panel").scrollIntoView({behavior:"instant"})');await shot('chart-'+width);
   }
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await run('window.print=()=>{window.__printed=true}');await click('#print');assert.equal(await run('window.__printed'),true);
   await click('[data-car-tab="tenet"]');assert.equal(await run('document.getElementById("tenet-serviceUseSchedule-value").checked'),true);
   assert.equal(await run('document.querySelector("[data-field=\\"tenet.price\\"] .basis").textContent'),'Исходное: подтверждено прайсом ↗');
-  await send('Page.navigate',{url:new URL('audit.html#tenet',baseURL).href});
+  await navigate(new URL('audit.html#tenet',baseURL).href);
   for(let i=0;i<50;i++){if(await run('document.querySelectorAll("[data-audit-field]").length>500'))break;await pause(100);}
   assert.equal(await run('document.getElementById("tenet").open'),true);
   assert.equal(await run('document.querySelectorAll("#model-findings article").length'),8);

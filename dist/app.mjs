@@ -74,6 +74,8 @@ function fieldHTML(field,scope){
 function groupHTML(group,scope){const fields=group.fields.filter(f=>(!f.customOnly||scope==='custom')&&(!f.models||f.models.includes(scope)));const key=(scope==='general'?'general':'car')+'-'+group.id;return '<details class="settings-group" data-group="'+key+'"'+(opened.has(key)?' open':'')+'><summary>'+escape(group.title)+'<span class="group-count">'+fields.length+'</span></summary><div class="fields-grid">'+fields.map(f=>fieldHTML(f,scope)).join('')+'</div></details>';}
 function renderGeneral(){
   $('main-controls').innerHTML=GENERAL_GROUPS[0].fields.slice(0,3).map(f=>fieldHTML(f,'general')).join('');
+  $('quick-purchase').innerHTML=fieldHTML(FIELDS.general.includePurchase,'general');
+  $('quick-sale').innerHTML=fieldHTML(FIELDS.general.includeSale,'general');
   $('quick-casco').innerHTML=fieldHTML(FIELDS.general.cascoEnabled,'general');
   $('quick-maintenance-fields').innerHTML=fieldHTML(FIELDS.general.serviceIntervalShift,'general');
   $('general-details').innerHTML=groupHTML({id:'resale',title:'Общий прогноз перепродажи',fields:[FIELDS.general.resaleShift]},'general')+GENERAL_GROUPS.slice(1).map(group=>groupHTML(group,'general')).join('');
@@ -163,6 +165,7 @@ function renderChanges(){
   $('changes-list').innerHTML=changes.length?changes.map(c=>'<div class="change-row"><div><strong>'+escape(c.scope==='general'?'Общие условия':nameOf(c.scope))+'</strong><span>'+escape(c.field?.label??c.key)+': '+escape(fieldValue(c.field,c.before))+' → '+escape(fieldValue(c.field,c.value))+'</span></div><button type="button" class="quiet-button" data-reset-field="'+c.key+'" data-scope="'+c.scope+'">Вернуть исходное</button></div>').join(''):'<p class="table-note">Все параметры соответствуют исходному расчёту.</p>';
 }
 function moneyDescription(){return state.general.financial&&state.general.moneyMode==='nominal'?'Будущие номинальные рубли':'Покупательная способность рублей 2026 года';}
+function accountingDescription(g){return (g.includePurchase?(g.includeSale?'Учтены покупка и продажа.':'Учтена покупка; машина остаётся у вас.'):(g.includeSale?'Покупка исключена, продажа учтена.':'Покупка и продажа исключены.'))+' Включены резервы на ремонт.';}
 function renderResults(){
   $('review-notice').hidden=!state.needsReview;
   results=calculate(state);
@@ -172,19 +175,21 @@ function renderResults(){
   const g=state.general;
   $('period-label').textContent=yearLabel(g.years)+' · '+num.format(g.km*g.years)+' км · '+moneyDescription();
   $('currency-label').textContent=moneyDescription();
-  $('print-assumptions').textContent='Срок '+yearLabel(g.years)+', пробег '+num.format(g.km)+' км/год, бензин '+g.fuelPrice+' ₽/л. '+moneyDescription()+'.';
+  $('print-assumptions').textContent='Срок '+yearLabel(g.years)+', пробег '+num.format(g.km)+' км/год, бензин '+g.fuelPrice+' ₽/л. '+moneyDescription()+'. '+accountingDescription(g);
+  $('results-title').textContent=g.includePurchase?(g.includeSale?'Расходы с учётом перепродажи':'Расходы без продажи'):(g.includeSale?'Расходы без покупки, с продажей':'Расходы без покупки и продажи');
+  $('cost-formula').textContent=(g.includePurchase?'Покупка + ':'')+'оформление + эксплуатация + финансирование'+(g.includeSale?' − чистая выручка от продажи':'')+' = расходы за срок';
   $('result-empty').hidden=results.length>0;
   $('result-content').hidden=results.length===0;
   const base=results.find(r=>r.id===compareBase),metricLabel=metric==='annual'?'в год':metric==='monthly'?'в месяц':'за весь срок';
   $('compare-base').innerHTML=results.map(r=>'<option value="'+r.id+'"'+(r.id===compareBase?' selected':'')+'>'+escape(r.name)+'</option>').join('');$('sort-results').value=sortMode;
   document.querySelectorAll('[data-metric]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.metric===metric)));
-  $('metric-explanation').textContent=(metric==='tco'?'Стоимость ':'Средняя стоимость ')+metricLabel+' включает потерю цены при перепродаже и резервы на ремонт. Это не платёж по кредиту. Разница показана относительно '+(base?.name??'выбранной машины')+'.';
-  $('cards').innerHTML=results.map(r=>'<article class="car-card" style="--car:'+r.color+'"><h3>'+escape(r.name)+'</h3><p class="trim">'+escape(r.trim)+'</p><div class="total">'+(metric==='tco'?millions(r.tco):num.format(r[metric]/1000))+' <small>'+(metric==='tco'?'млн ₽':'тыс. ₽')+'</small></div><div class="annual">'+(metric==='tco'?'Стоимость ':'Средняя стоимость ')+metricLabel+'</div><div class="comparison-delta">'+(r.id===compareBase?'База сравнения':signed(r[metric]-base[metric])+' '+metricLabel)+'</div><div class="sale-tag">Оценка продажи: '+millions(r.saleNet)+' млн ₽</div><button class="edit-car" type="button" data-edit-car="'+r.id+'">Настроить →</button></article>').join('');
+  $('metric-explanation').textContent=(metric==='tco'?'Расходы ':'Средние расходы ')+metricLabel+'. '+accountingDescription(g)+' Это не платёж по кредиту. Разница показана относительно '+(base?.name??'выбранной машины')+'.';
+  $('cards').innerHTML=results.map(r=>'<article class="car-card" style="--car:'+r.color+'"><h3>'+escape(r.name)+'</h3><p class="trim">'+escape(r.trim)+'</p><div class="total">'+(metric==='tco'?millions(r.tco):num.format(r[metric]/1000))+' <small>'+(metric==='tco'?'млн ₽':'тыс. ₽')+'</small></div><div class="annual">'+(metric==='tco'?'Стоимость ':'Средняя стоимость ')+metricLabel+'</div><div class="comparison-delta">'+(r.id===compareBase?'База сравнения':signed(r[metric]-base[metric])+' '+metricLabel)+'</div><div class="sale-tag">'+(g.includeSale?'Оценка продажи: '+millions(r.saleNet)+' млн ₽':'Продажа не учитывается')+'</div><button class="edit-car" type="button" data-edit-car="'+r.id+'">Настроить →</button></article>').join('');
   $('column-choices').innerHTML=Object.entries(COLUMNS).map(([key,[label]])=>'<label><input type="checkbox" data-column="'+key+'"'+(columns.has(key)?' checked':'')+'>'+escape(label)+'</label>').join('');
   $('comparison-head').innerHTML='<tr><th scope="col">Автомобиль</th>'+[...columns].map(key=>'<th scope="col">'+escape(key==='delta'?'Разница '+metricLabel+', ₽':COLUMNS[key][0])+'</th>').join('')+'</tr>';
   $('comparison-rows').innerHTML=results.map(r=>'<tr><th scope="row"><span class="dot" style="background:'+r.color+'"></span>'+escape(r.name)+'</th>'+[...columns].map(key=>'<td>'+((COLUMNS[key][1](r)===null)?'—':key==='delta'?signed(COLUMNS[key][1](r)):rub(COLUMNS[key][1](r)))+'</td>').join('')+'</tr>').join('');
   $('breakdown-head').innerHTML='<tr><th scope="col">Статья расходов</th>'+results.map(r=>'<th scope="col">'+escape(r.name)+'</th>').join('')+'</tr>';
-  $('breakdown-rows').innerHTML=Object.entries(CATEGORY_LABELS).map(([key,label])=>'<tr><th scope="row">'+label+'</th>'+results.map(r=>'<td>'+rub(r.categories[key])+'</td>').join('')+'</tr>').join('')+'<tr><th scope="row">Выручка от продажи до комиссии</th>'+results.map(r=>'<td>−'+rub(r.sale)+'</td>').join('')+'</tr><tr class="table-total"><th scope="row">Стоимость владения</th>'+results.map(r=>'<td>'+rub(r.tco)+'</td>').join('')+'</tr>';
+  $('breakdown-rows').innerHTML=Object.entries(CATEGORY_LABELS).map(([key,label])=>'<tr><th scope="row">'+label+'</th>'+results.map(r=>'<td>'+rub(r.categories[key])+'</td>').join('')+'</tr>').join('')+'<tr><th scope="row">Выручка от продажи до комиссии</th>'+results.map(r=>'<td>'+(r.sale?'−':'')+rub(r.sale)+'</td>').join('')+'</tr><tr class="table-total"><th scope="row">Стоимость владения</th>'+results.map(r=>'<td>'+rub(r.tco)+'</td>').join('')+'</tr>';
   $('finance-output').hidden=!(g.financial&&(g.loanEnabled||g.capitalEnabled))||!results.length;
   $('finance-rows').innerHTML=results.map(r=>'<tr><th scope="row">'+escape(r.name)+'</th><td>'+rub(r.loanPayment)+'</td><td>'+rub(r.loanInterest)+'</td><td>'+rub(r.loanRemaining)+'</td><td>'+(g.capitalEnabled?rub(r.capital):'—')+'</td></tr>').join('');
   if(!results.some(r=>r.id===annualCar))annualCar=results[0]?.id??'azimut';
@@ -197,8 +202,9 @@ function renderResults(){
   if(state.cars.custom.enabled)notices.push('«'+displayName(CAR_INFO.at(-1),state.cars.custom)+'» рассчитан по вашим параметрам. Начальные значения условные, рыночные данные не загружаются.');
   if(state.cars.custom.enabled&&state.cars.custom.resaleMode==='auto'&&(state.cars.custom.retention5>state.cars.custom.retention3||state.cars.custom.retention8>state.cars.custom.retention5))notices.push('У вашего автомобиля задан рост остаточной стоимости с возрастом — проверьте доли цены через 3, 5 и 8 лет.');
   if(g.years!==5&&g.years!==8)notices.push('Прогноз на этот срок рассчитан по возрастным ориентирам и интерполяции между ними; после восьми лет применяется заданное удешевление.');
-  if(CAR_INFO.some(c=>state.cars[c.id].enabled&&state.cars[c.id].resaleMode==='manual'))notices.push('Ручная цена продажи не реагирует на срок, пробег и общую поправку. Торг и расходы на продажу применяются.');
-  if(g.financial&&g.loanEnabled)notices.push('Непогашенный кредит полностью закрывается при продаже; остаток долга уже включён в расчёт.');
+  if(g.includeSale&&CAR_INFO.some(c=>state.cars[c.id].enabled&&state.cars[c.id].resaleMode==='manual'))notices.push('Ручная цена продажи не реагирует на срок, пробег и общую поправку. Торг и расходы на продажу применяются.');
+  if(!g.includePurchase)notices.push('Цена покупки исключена, но оформление, оборудование, страховки и проценты по кредиту остаются. Оценка продажи использует сохранённые ценовые параметры.'+(g.includeSale?' Итог может быть отрицательным, поскольку цена покупки не вычитается из выручки.':''));
+  if(g.financial&&g.loanEnabled)notices.push(g.includeSale?(g.includePurchase?'Непогашенный кредит полностью закрывается при продаже; остаток долга уже включён в расчёт.':'Выплаты основного долга исключены вместе с ценой покупки; проценты и комиссии учтены.'):'Машина остаётся у вас: досрочного погашения кредита в конце периода нет. Остаток долга показан отдельно; платежи за пределами срока не учтены.');
   if(!g.financial)notices.push('Финансовый блок выключен: инфляция, рост цен, кредит и альтернативная доходность не учитываются.');
   $('scenario-notices').textContent=notices.join(' ');
   const sorted=[...results].sort((a,b)=>a.tco-b.tco);
@@ -208,7 +214,7 @@ function renderResults(){
 function renderLiveSummary(){
   const info=CAR_INFO.find(c=>c.id===selectedCar),r=calculateCar(info,state.cars[selectedCar],state.general),baseline=currentScenario()?.state??defaults,previous=calculateCar(info,baseline.cars[selectedCar],baseline.general),difference=r.annual-previous.annual;
   const note=state.cars[selectedCar].enabled?'Участвует в сравнении':'Предпросмотр · не включён в сравнение';
-  $('live-summary').innerHTML='<p class="eyebrow">Результат настройки</p><h3>'+escape(r.name)+'</h3><strong class="live-value">'+num.format(r.annual/1000)+' тыс. ₽/год</strong><p class="live-delta">'+signed(difference)+' в год '+(currentScenario()?'к открытому сценарию':'к исходным параметрам')+'</p><dl><dt>За '+yearLabel(state.general.years)+'</dt><dd>'+rub(r.tco)+'</dd><dt>Средняя стоимость в месяц</dt><dd>'+rub(r.monthly)+'</dd><dt>Оценка продажи</dt><dd>'+rub(r.saleNet)+'</dd></dl><p class="table-note">'+note+'. Включены потеря цены и резервы.</p><a href="#results">К сравнению ↑</a>';
+  $('live-summary').innerHTML='<p class="eyebrow">Результат настройки</p><h3>'+escape(r.name)+'</h3><strong class="live-value">'+num.format(r.annual/1000)+' тыс. ₽/год</strong><p class="live-delta">'+signed(difference)+' в год '+(currentScenario()?'к открытому сценарию':'к исходным параметрам')+'</p><dl><dt>За '+yearLabel(state.general.years)+'</dt><dd>'+rub(r.tco)+'</dd><dt>Средняя стоимость в месяц</dt><dd>'+rub(r.monthly)+'</dd><dt>Продажа в расчёте</dt><dd>'+(state.general.includeSale?rub(r.saleNet):'Не учитывается')+'</dd></dl><p class="table-note">'+note+'. '+accountingDescription(state.general)+'</p><a href="#results">К сравнению ↑</a>';
   $('mobile-dock').innerHTML='<div><span>'+escape(r.name)+'</span><strong>'+num.format(r.annual/1000)+' тыс. ₽/год</strong><small>'+signed(difference)+' к '+(currentScenario()?'сценарию':'исходному')+(state.cars[selectedCar].enabled?'':' · предпросмотр')+'</small></div><a href="#results">Сравнить ↑</a>';
 }
 function renderAnnual(){
