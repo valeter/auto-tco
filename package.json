@@ -1,0 +1,14 @@
+{
+  "name": "auto-tco",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Калькулятор полной стоимости владения автомобилем",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test model.test.mjs",
+    "test:browser": "node browser-qa.mjs"
+  }
+}
