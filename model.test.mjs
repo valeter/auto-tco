@@ -2,22 +2,67 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CAR_INFO,FIELDS,defaultState,normalizeState,calculate,stateDelta,resale,loanSchedule} from './dist/model.mjs';
 import {LEGACY_V2} from './dist/legacy-v2.mjs';
+import {SOURCES,parameterEvidence} from './dist/sources.mjs';
 
 const near=(a,b)=>assert.ok(Math.abs(a-b)<.001,`${a} != ${b}`);
 const car=(s,id='azimut')=>calculate(s).find(c=>c.id===id);
 
-test('preserves legacy full states and sparse links against their original defaults',()=>{
+test('preserves unchanged cars in legacy full states and sparse links',()=>{
   const s=structuredClone(LEGACY_V2);
   assert.equal(s.cars.azimut.price,2800000);
   assert.equal(calculate(s).length,7);
-  for(const [id,tco] of [['changan',4294380],['tenet',4562025],['gac',5302300],['jolion',3188675]])near(car(s,id).tco,tco);
+  for(const [id,tco] of [['changan',4294380],['tenet',4562025],['jolion',3188675]])near(car(s,id).tco,tco);
   s.general.years=8;
-  for(const [id,tco] of [['changan',6259822.5],['tenet',6564625],['gac',7613575],['jolion',4749775]])near(car(s,id).tco,tco);
+  for(const [id,tco] of [['changan',6259822.5],['tenet',6564625],['jolion',4749775]])near(car(s,id).tco,tco);
   s.general.years=3;assert.equal(car(s).rows.length,4);near(car(s,'belgee').saleNet,1900000);
   const sparse=normalizeState({version:2,general:{years:3}});
   assert.equal(sparse.needsReview,true);assert.deepEqual(calculate(sparse),calculate(s));
   assert.deepEqual(normalizeState(stateDelta(sparse)),sparse);
   assert.equal(defaultState().needsReview,false);
+});
+
+test('UNI-V uses the current Russian trim and its own running costs and resale scenario',()=>{
+  const state=defaultState(),info=CAR_INFO.find(c=>c.id==='univ'),c=state.cars.univ;
+  assert.equal(CAR_INFO.some(c=>c.id==='gac'),false);
+  assert.match(info.trim,/2\.0T 8AT FWD · 196 л\.с\./);
+  assert.equal(c.price,3579900);assert.equal(c.tax,196*50);
+  assert.equal(c.fuel,10);assert.equal(c.summerPrice,60000);assert.equal(c.winterPrice,70000);
+  assert.equal(c.serviceEarly,30000);assert.equal(c.serviceLate,40000);
+  for(const [years,retention] of [[3,.65],[5,.50],[8,.35]]){
+    state.general.years=years;
+    near(car(state,'univ').saleNet,3579900*retention*.95);
+    near(car(state,'univ').categories.fuel,years*15000/100*10*77);
+    near(car(state,'univ').categories.tax,years*9800);
+  }
+  state.general.years=5;
+  assert.equal(car(state,'univ').rows.reduce((sum,r)=>sum+r.serviceCount,0),8);
+  near(car(state,'univ').categories.service,8*30000);
+  state.general.km=0;
+  assert.equal(car(state,'univ').rows.reduce((sum,r)=>sum+r.serviceCount,0),5);
+  near(car(state,'univ').categories.service,5*30000);
+  assert.equal(parameterEvidence('univ','serviceMonths').status,'conditional');
+  assert.equal(parameterEvidence('univ','fuel').status,'assumption');
+  assert.equal(parameterEvidence('univ','price').url,SOURCES.univ.priceSource);
+});
+
+test('GS8 scenarios migrate only selection to UNI-V and remain stable on repeated loads and sharing',()=>{
+  for(const version of [2,3,4])for(const enabled of [true,false]){
+    const old={version,general:{km:18000},cars:{gac:{...LEGACY_V2.cars.gac,enabled,price:5100000,fuel:14,manualSale:3100000},azimut:{price:3100000}}};
+    const snapshot=structuredClone(old),migrated=normalizeState(old);
+    assert.deepEqual(old,snapshot);
+    assert.deepEqual(migrated.cars.univ,{...defaultState().cars.univ,enabled});
+    assert.equal(Object.hasOwn(migrated.cars,'gac'),false);
+    assert.equal(migrated.needsReview,true);
+    assert.equal(migrated.cars.azimut.price,3100000);assert.equal(migrated.general.km,18000);
+    assert.equal(calculate(migrated).some(c=>c.id==='univ'),enabled);
+    assert.deepEqual(normalizeState(migrated),migrated);
+    assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(stateDelta(migrated)))),migrated);
+    const sparse=normalizeState({version});
+    assert.deepEqual(sparse.cars.univ,defaultState().cars.univ);
+    assert.equal(sparse.needsReview,true);
+  }
+  const mixed=defaultState();mixed.cars.gac=LEGACY_V2.cars.gac;mixed.cars.univ.price=3300000;
+  assert.equal(normalizeState(mixed).cars.univ.price,3300000);
 });
 
 test('all supported horizons and mileage boundaries remain finite and reconcile',()=>{
@@ -82,7 +127,7 @@ test('reviewed first-service schedules and TENET per-visit prices are counted on
   s.general.km=25000;s.general.years=2;
   assert.deepEqual(car(s,'jolion').rows.slice(1).map(r=>r.serviceCount),[2,1]);
   s.general.km=15000;s.general.years=5;
-  assert.equal(car(s,'gac').rows.reduce((n,r)=>n+r.serviceCount,0),7);
+  assert.equal(car(s,'univ').rows.reduce((n,r)=>n+r.serviceCount,0),8);
   assert.equal(car(s,'changan').rows.reduce((n,r)=>n+r.serviceCount,0),10);
   near(car(s,'tenet').categories.service,16500+24300+24300+36300+30800+35200+59400+24300);
   s.cars.tenet.zeroService=0;s.general.years=8;
@@ -159,16 +204,16 @@ test('legacy CASCO settings survive migration and disabled overrides stay disabl
   const legacy=defaultState();
   for(const key of ['cascoFirst','cascoNext','cascoLate','cascoYears'])delete legacy.general[key];
   for(const c of Object.values(legacy.cars))delete c.overrideCasco;
-  legacy.cars.gac.cascoFirst=9;legacy.cars.azimut.cascoYears=0;
+  legacy.cars.univ.cascoFirst=9;legacy.cars.azimut.cascoYears=0;
   const migrated=normalizeState(legacy);
-  assert.equal(migrated.cars.gac.overrideCasco,true);assert.equal(migrated.cars.azimut.overrideCasco,true);
-  assert.equal(migrated.cars.jolion.overrideCasco,false);near(car(migrated,'gac').categories.casco,5349000*.23);
+  assert.equal(migrated.cars.univ.overrideCasco,true);assert.equal(migrated.cars.azimut.overrideCasco,true);
+  assert.equal(migrated.cars.jolion.overrideCasco,false);near(car(migrated,'univ').categories.casco,3579900*.23);
   near(car(migrated).categories.casco,0);
-  const sparse=normalizeState({version:2,cars:{gac:{cascoFirst:9}}});assert.equal(sparse.cars.gac.overrideCasco,true);
-  migrated.cars.gac.overrideCasco=false;migrated.general.cascoFirst=3;
+  const sparse=normalizeState({version:2,cars:{changan:{cascoFirst:9}}});assert.equal(sparse.cars.changan.overrideCasco,true);
+  migrated.cars.univ.overrideCasco=false;migrated.general.cascoFirst=3;
   assert.deepEqual(normalizeState(stateDelta(migrated)),migrated);
   assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(migrated))),migrated);
-  near(car(normalizeState(stateDelta(migrated)),'gac').categories.casco,5349000*.17);
+  near(car(normalizeState(stateDelta(migrated)),'univ').categories.casco,3579900*.17);
 });
 
 test('tires include first winter only, replacements before sale, and optional legacy reserve',()=>{
@@ -204,7 +249,7 @@ test('purchase and sale switches preserve price and insurance and reconcile all 
   for(const financial of [false,true])for(const moneyMode of ['real','nominal'])for(const years of [3,5,8]){
     const s=defaultState();s.cars.custom.enabled=true;
     Object.assign(s.general,{financial,moneyMode,years});
-    s.cars.gac.saleCommission=3;s.cars.gac.saleFixed=10000;
+    s.cars.univ.saleCommission=3;s.cars.univ.saleFixed=10000;
     const cars=structuredClone(s.cars),original=calculate(s);
     for(const includePurchase of [true,false])for(const includeSale of [true,false]){
       Object.assign(s.general,{includePurchase,includeSale});
@@ -246,8 +291,8 @@ test('keeping the car does not trigger loan settlement and excluded purchase nev
 
 test('transport tax is independent of expense inflation',()=>{
   const s=defaultState();Object.assign(s.general,{financial:true,moneyMode:'nominal',otherGrowth:20});
-  near(car(s,'gac').categories.tax,5*17325);
-  s.general.taxGrowth=10;assert.ok(car(s,'gac').categories.tax>5*17325);
+  near(car(s,'univ').categories.tax,5*9800);
+  s.general.taxGrowth=10;assert.ok(car(s,'univ').categories.tax>5*9800);
 });
 
 test('sanitizes imported settings and supports delta round-trip, including all-off',()=>{
@@ -278,11 +323,11 @@ test('custom car is last and opt-in and does not change other cars',()=>{
 test('Granta is included in new scenarios while v3 full and sparse scenarios retain their selection',()=>{
   const current=defaultState(),previous=structuredClone(current);
   previous.version=3;delete previous.cars.granta;
-  previous.general.km=18000;previous.cars.gac.price=5100000;
+  previous.general.km=18000;previous.cars.univ.price=5100000;
   const restored=normalizeState(previous);
   assert.equal(restored.cars.granta.enabled,false);
   assert.equal(restored.cars.granta.tireMode,'purchases');
-  assert.equal(restored.cars.gac.price,5100000);assert.equal(restored.general.km,18000);
+  assert.equal(restored.cars.univ.price,5100000);assert.equal(restored.general.km,18000);
   assert.equal(calculate(restored).length,7);
   assert.equal(calculate({version:3,general:{years:3}}).length,7);
   assert.deepEqual(normalizeState(stateDelta(restored)),restored);

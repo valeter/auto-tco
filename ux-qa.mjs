@@ -44,7 +44,21 @@ try{
   assert.equal(await val('compare-base'),'granta');
   assert.equal(await run('document.querySelector("[data-enabled=granta]").checked'),true);
   assert.equal(await val('azimut-price-value'),'3100000');
-  await change('compare-base','gac');await reload();await ready();assert.equal(await val('compare-base'),'gac');
+  const oldGS8=defaultState();oldGS8.version=4;delete oldGS8.cars.univ;oldGS8.cars.gac={enabled:true,price:5349000,fuel:12.5,serviceEarly:55000,tax:17325};oldGS8.cars.azimut.price=3100000;
+  await run(`window.addEventListener('pagehide',()=>{localStorage.setItem('auto-tco-state-v2',${JSON.stringify(JSON.stringify(oldGS8))});localStorage.setItem('auto-tco-scenarios-v2',JSON.stringify([{id:'legacy-gs8',name:'Старый GS8',state:${JSON.stringify(oldGS8)}}]));localStorage.setItem('auto-tco-ui-v4',JSON.stringify({selectedCar:'gac',compareBase:'gac',grantaBaselineAdded:true}));},{once:true});`);
+  await navigate('about:blank');await navigate(baseURL.href);await ready();
+  assert.equal(await val('compare-base'),'univ');
+  assert.match(await run('document.getElementById("car-editor-title").textContent'),/Changan UNI-V.*196 л\.с\./);
+  assert.equal(await val('univ-price-value'),'3579900');assert.equal(await val('univ-fuel-value'),'10');
+  assert.equal(await run('document.querySelector("[data-enabled=gac]")===null'),true);
+  assert.equal(await run('document.getElementById("review-notice").hidden'),false);
+  await change('scenario-select','legacy-gs8');assert.equal(await val('univ-price-value'),'3579900');assert.equal((await saved()).cars.azimut.price,3100000);
+  const oldLink=new URL(baseURL);oldLink.hash='s='+Buffer.from(JSON.stringify(oldGS8)).toString('base64');
+  await navigate(oldLink.href);await ready();assert.equal(await val('univ-price-value'),'3579900');
+  await click('#share');await navigate(await val('share-url'));await ready();assert.equal(await val('univ-price-value'),'3579900');
+  assert.deepEqual((await saved()).cars.univ,defaultState().cars.univ);
+  await change('scenario-select','legacy-gs8');await click('#delete-scenario');await click('#dismiss-undo');await click('#reset-all');await click('#dismiss-undo');
+  await change('compare-base','univ');await reload();await ready();assert.equal(await val('compare-base'),'univ');
   await change('compare-base','granta');await click('#reset-all');await click('#dismiss-undo');
   await click('[data-car-tab="granta"]');assert.equal(await val('granta-price-value'),'1290000');
   await input('granta-price-value',1390000);assert.equal((await saved()).cars.granta.price,1390000);
@@ -123,7 +137,7 @@ try{
   assert.equal(await run('document.getElementById("azimut-overrideCasco-value").checked'),true);assert.equal(await val('azimut-cascoFirst-value'),'9');
   assert.equal(await run('document.getElementById("review-notice").hidden'),false);
   await click('#apply-reviewed-defaults');assert.equal(await run('document.getElementById("review-notice").hidden'),true);
-  assert.equal((await saved()).cars.gac.serviceKm,10000);assert.equal((await saved()).cars.azimut.tireMode,'purchases');
+  assert.equal((await saved()).cars.univ.serviceKm,10000);assert.equal((await saved()).cars.azimut.tireMode,'purchases');
   await click('#undo');assert.equal(await run('document.getElementById("review-notice").hidden'),false);
   await click('#reset-all');await click('#dismiss-undo');
   await run('document.querySelector("[data-group=general-extras]").open=true;document.getElementById("general-settings").scrollIntoView({behavior:"instant"})');await shot('casco-desktop');
@@ -139,7 +153,7 @@ try{
   await click('[data-car-tab="azimut"]');await run('document.querySelector("[data-group=car-service]").open=true');
   assert.equal((await type('azimut-serviceKm-value','10000')).at(-1),'10000');await key('Enter');assert.equal((await saved()).cars.azimut.serviceKm,10000);
   assert.match(await run('document.querySelector("[data-field=\\"azimut.serviceKm\\"] .field-change").textContent'),/15.*000.*10.*000/);
-  await click('[data-car-tab="gac"]');await click('[data-car-tab="azimut"]');assert.equal(await run('document.querySelector("[data-group=car-service]").open'),true);
+  await click('[data-car-tab="univ"]');await click('[data-car-tab="azimut"]');assert.equal(await run('document.querySelector("[data-group=car-service]").open'),true);
   const actual=await run('[...document.querySelectorAll("#car-settings [data-field]")].map(e=>e.dataset.field.split(".")[1])');
   assert.deepEqual([...new Set(actual)].sort(),Object.keys(defaultState().cars.azimut).filter(k=>!['enabled','serviceUseSchedule'].includes(k)).sort());
   const visibleFinance=()=>run('[...document.querySelectorAll("[data-group=general-finance] .field")].filter(e=>!e.hidden).length');
@@ -158,10 +172,10 @@ try{
   await click('#delete-scenario');assert.equal((await scenarios()).length,2);await click('#undo');assert.equal((await scenarios()).length,3);
   await click('[data-car-tab="azimut"]');await input('azimut-price-value',3100000);await click('#reset-car');assert.equal(await val('azimut-price-value'),'2800000');await click('#undo');assert.equal(await val('azimut-price-value'),'3100000');
   await click('#reset-all');await click('#undo');assert.equal(await val('azimut-price-value'),'3100000');
-  await change('compare-base','gac');assert.match(await run('document.querySelector("#cards article .comparison-delta").textContent'),/−/);
+  await change('compare-base','univ');assert.match(await run('document.querySelector("#cards article .comparison-delta").textContent'),/−/);
   await click('[data-metric="monthly"]');assert.match(await run('document.getElementById("metric-explanation").textContent'),/не платёж по кредиту/);
   await click('[data-column="purchase"]');assert.match(await run('document.getElementById("comparison-head").textContent'),/Покупка/);
-  await click('[data-chart="gac"]');assert.equal(await val('chart-car'),'gac');assert.equal(await run('document.querySelectorAll("#chart g[opacity=\\".15\\"]").length'),7);
+  await click('[data-chart="univ"]');assert.equal(await val('chart-car'),'univ');assert.equal(await run('document.querySelectorAll("#chart g[opacity=\\".15\\"]").length'),7);
   await click('[data-open-custom]');assert.equal(await run('document.querySelector("[data-stage=\\"1\\"]").hidden'),false);
   await input('custom-name-value','Мой автомобиль');await change('copy-from','jolion');await click('#copy-car');assert.equal(await val('custom-price-value'),'2949000');assert.equal((await saved()).cars.custom.enabled,false);
   await click('#wizard-next');assert.equal(await run('document.querySelector("[data-stage=\\"2\\"]").hidden'),false);
@@ -175,6 +189,7 @@ try{
   await click('#share');const url=await val('share-url');await run('localStorage.clear()');await navigate(url);await ready();
   assert.equal(await run('document.querySelectorAll("#cards article").length'),9);await click('[data-car-tab="custom"]');assert.equal(await val('custom-price-value'),'3330000');
   await run('window.__csv=null;URL.createObjectURL=b=>{window.__csv=b;return "blob:qa"};HTMLAnchorElement.prototype.click=function(){}');await click('#export');const csv=await run('window.__csv.text()');assert.match(csv,/Мой автомобиль/);assert.match(csv,/3330000/);
+  assert.match(csv,/Changan UNI-V/);assert.doesNotMatch(csv,/GAC GS8/);
   await input('general-km-value',0);assert.equal((await saved()).general.km,0);
   for(const id of Object.keys(defaultState().cars))await click('[data-enabled="'+id+'"]');assert.equal(await run('document.getElementById("result-empty").hidden'),false);
   await click('#reset-all');await click('#dismiss-undo');await click('[data-metric="annual"]');
@@ -197,11 +212,13 @@ try{
   assert.equal(await run('document.querySelectorAll("#impact-rows tr").length'),8);
   assert.equal(await run('/NaN|undefined/.test(document.getElementById("impact-rows").textContent)'),false);
   assert.ok(await run('document.getElementById("granta").textContent.includes("106 л.с.")'));
+  assert.match(await run('document.getElementById("univ").textContent'),/9\s*800/);
+  assert.equal(await run('document.querySelector("[data-audit-field=\\"univ.serviceMonths\\"] .tag").textContent'),'общий график UNI-V');
   for(const width of [390,320]){
     await send('Emulation.setDeviceMetricsOverride',{width,height:844,deviceScaleFactor:1,mobile:true});await pause(100);
     assert.equal(await run('document.documentElement.scrollWidth>innerWidth'),false);
   }
   await run('scrollTo(0,0)');const auditShot=await send('Page.captureScreenshot',{format:'png'});await writeFile(join(outputDir,'audit-mobile.png'),Buffer.from(auditShot.data,'base64'));
   assert.deepEqual(errors,[]);
-  console.log('PASS: common CASCO rates, cutoff, individual exceptions and legacy/shared scenarios; real keyboard input, validation, scenario identities/copies/undo, all fields reachable, persistent groups, progressive finance, sorting/metrics/base/columns/chart, custom wizard/template, sharing/CSV, mobile layout and print.');
+  console.log('PASS: common CASCO rates, cutoff, individual exceptions and GS8 migration and legacy/shared scenarios; real keyboard input, validation, scenario identities/copies/undo, all fields reachable, persistent groups, progressive finance, sorting/metrics/base/columns/chart, custom wizard/template, sharing/CSV, mobile layout and print.');
 }finally{ws.close();}

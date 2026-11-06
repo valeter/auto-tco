@@ -24,7 +24,7 @@ function decodeHash(hash){
   const encoded=hash.slice(3).replace(/-/g,'+').replace(/_/g,'/');
   const bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
   const parsed=JSON.parse(new TextDecoder().decode(bytes));
-  if(![2,3,4].includes(parsed.version))throw new Error('Эта версия сценария не поддерживается.');
+  if(![2,3,4,5].includes(parsed.version))throw new Error('Эта версия сценария не поддерживается.');
   return normalizeState(parsed);
 }
 try{const shared=decodeHash(location.hash);if(shared){state=shared;bootMessage='Загружен сценарий из ссылки.';}}catch{bootMessage='Сценарий в ссылке не удалось прочитать. Загружены локальные настройки.';}
@@ -32,6 +32,7 @@ let customs=readStorage(SCENARIOS,[]);
 if(!Array.isArray(customs))customs=[];
 customs=customs.filter(x=>x&&typeof x.name==='string'&&typeof x.id==='string').slice(0,20).map(x=>({id:x.id.slice(0,80),name:x.name.slice(0,60),state:normalizeState(x.state)}));
 const preferences=readStorage('auto-tco-ui-v4',{});
+for(const key of ['selectedCar','compareBase'])if(preferences?.[key]==='gac')preferences[key]='univ';
 let selectedCar=CAR_INFO.some(c=>c.id===preferences?.selectedCar)?preferences.selectedCar:'azimut',annualCar='azimut',results=[];
 let activeScenario=typeof preferences?.activeScenario==='string'?preferences.activeScenario:'';
 if(location.hash.startsWith('#s='))activeScenario='';
